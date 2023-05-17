@@ -1,0 +1,179 @@
+---
+- name: Astra orel hardsec
+  gather_facts: yes
+  hosts: testSE
+  become: yes
+  vars:
+    sysctl_config:
+      kernel.dmesg_restrict: 1
+      kernel.kptr_restrict: 2
+      net.core.bpf_jit_harden: 2
+      kernel.perf_event_paranoid: 4
+      kernel.kexec_load_disabled: 1
+      kernel.unprivileged_bpf_disabled: 1
+      vm.unprivileged_userfaultfd: 0
+      dev.tty.ldisc_autoload: 0
+      kernel.yama.ptrace_scope: 3
+      fs.protected_symlinks: 1
+      fs.protected_hardlinks: 1
+      fs.protected_fifos: 2
+      fs.protected_regular: 2
+      fs.suid_dumpable: 0
+      net.ipv4.conf.all.accept_redirects: 0
+      net.ipv4.conf.default.accept_redirects: 0
+      net.ipv4.conf.all.secure_redirects: 0
+      net.ipv4.conf.default.secure_redirects: 0
+      net.ipv6.conf.all.accept_redirects: 0
+      net.ipv6.conf.default.accept_redirects: 0
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.default.send_redirects: 0
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
+
+
+  tasks:
+    - name: Check OS
+      debug: msg="Distr {{ ansible_os_family }}, Kernel version {{ ansible_kernel }}"
+    - block:
+      - name: Remove sysctl-settings in /etc/sysctl.d/protect-links.conf
+        with_dict: "{{ sysctl_config }}"
+        sysctl:
+          sysctl_file: /etc/sysctl.d/9999-astra-orel.conf
+          name: "{{ item.key }}"
+          state: absent
+          reload: no
+
+      - name: Remove sysctl-settings in /etc/sysctl.d/999-astra.conf
+        with_dict: "{{ sysctl_config }}"
+        sysctl:
+          sysctl_file: /etc/sysctl.d/999-astra.conf
+          name: "{{ item.key }}"
+          state: absent
+          reload: no
+
+      - name: Remove sysctl-settings in /etc/sysctl.d/999-cve-2019-14899.conf
+        with_dict: "{{ sysctl_config }}"
+        sysctl:
+          sysctl_file: /etc/sysctl.d/999-cve-2019-14899.conf
+          name: "{{ item.key }}"
+          state: absent
+          reload: no
+
+      - name: Change sysctl-settings in /etc/sysctl.conf
+        with_dict: "{{ sysctl_config }}"
+        sysctl:
+          name: "{{ item.key }}"
+          value: "{{ item.value }}"
+          sysctl_set: yes
+          state: present
+          reload: yes
+
+      - name: Edit line /etc/pam.d/common-password to add remember=5
+        lineinfile:
+          path: /etc/pam.d/common-password
+          line: 'password\1 remember=5'
+          regexp: '^password(.+pam_unix.so(:?(?!remember=5).)*?)$'
+          backrefs: true
+
+      - name: Edit line /etc/pam.d/su to allow su for astra-admin group
+        lineinfile:
+          path: /etc/pam.d/su
+          create: no
+          state: present
+          line: 'auth       required   pam_wheel.so group=astra-admin'
+          regexp: '.*auth.+required.+pam_wheel\.so$'
+
+      - name: Edit line GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub
+        lineinfile:
+          path: /etc/default/grub
+          line: 'GRUB_CMDLINE_LINUX_DEFAULT="\1 init_on_alloc=1 slab_nomerge iommu=force iommu.strict=1 iommu.passthrough=0 randomize_kstack_offset=1 page_alloc.shuffle=1 vsyscall=none debugfs=no-mount tsx=off kernel.randomize_va_space=2"'
+          regexp: '^GRUB_CMDLINE_LINUX_DEFAULT="((:?(?!init_on_alloc).)*?)"$'
+          backup: true
+          backrefs: true
+        register: editgrub
+
+      - name: update-grub
+        command: update-grub
+        when: editgrub is changed
+
+      - name: Add line MACs to sshd_config
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          create: no
+          state: present
+          line: 'MACs hmac-gost2012-256-etm,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512'
+          regexp: '^MACs'
+
+      - name: Add line Ciphers to sshd_config
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          create: no
+          state: present
+          line: 'Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes128-gcm@openssh.com,aes256-gcm@openssh.com'
+          regexp: '^Ciphers'
+
+      - name: Add line KexAlgorithms to sshd_config
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          create: no
+          state: present
+          line: 'KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521'
+          regexp: '^KexAlgorithms'
+
+      - name: Add line MACs to ssh_config###
+        lineinfile:
+          path: /etc/ssh/ssh_config
+          create: no
+          state: present
+          line: 'MACs hmac-gost2012-256-etm,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512'
+          regexp: '^MACs'
+
+      - name: Add line Ciphers to ssh_config###
+        lineinfile:
+          path: /etc/ssh/ssh_config
+          create: no
+          state: present
+          line: 'Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes128-gcm@openssh.com,aes256-gcm@openssh.com'
+          regexp: '^Ciphers'
+
+      - name: Add line KexAlgorithms to ssh_config###
+        lineinfile:
+          path: /etc/ssh/ssh_config
+          create: no
+          state: present
+          line: 'KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521'
+          regexp: '^KexAlgorithms'
+
+
+      - name: Add line LoginGraceTime 1m in sshd_config
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          create: no
+          state: present
+          line: 'LoginGraceTime 1m'
+          regexp: '.*LoginGraceTime'
+
+      - name: Add line MaxAuthTries 3 in sshd_config
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          create: no
+          state: present
+          line: 'MaxAuthTries 3'
+          regexp: '.*MaxAuthTries'
+
+      - name: Add line MaxSessions 5 in sshd_config
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          create: no
+          state: present
+          line: 'MaxSessions 5'
+          regexp: '.*MaxSessions'
+
+
+      - name: Restart sshd
+        service:
+          name: sshd
+          state: restarted
+          enabled: yes
+
+      when: ansible_os_family == "Astra Linux" and ansible_kernel | regex_search("^5\.")
