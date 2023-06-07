@@ -1,5 +1,5 @@
 ---
-- name: Astra orel hardsec
+- name: Astra SE smolensk hardsec
   gather_facts: yes
   hosts: testSE
   become: yes
